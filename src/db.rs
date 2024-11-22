@@ -1,5 +1,9 @@
+use std::path::PathBuf;
+
 use chrono::{NaiveDate, NaiveTime};
 use rusqlite::{params, Connection, Result, Row};
+
+use crate::app::TimeKeeperError;
 
 #[derive(Debug)]
 pub struct Record {
@@ -21,12 +25,36 @@ impl Record {
     }
 }
 
+pub fn get_db_path() -> Result<PathBuf, TimeKeeperError> {
+    let project_dirs = directories::ProjectDirs::from("", "", "timekeeper").ok_or_else(|| {
+        TimeKeeperError::DatabaseError(rusqlite::Error::InvalidPath(PathBuf::from(
+            "Could not determine project directory",
+        )))
+    })?;
+
+    let data_dir = project_dirs.data_dir();
+    std::fs::create_dir_all(data_dir).map_err(|e| {
+        TimeKeeperError::DatabaseError(rusqlite::Error::InvalidPath(PathBuf::from(format!(
+            "Failed to create data directory: {}",
+            e
+        ))))
+    })?;
+
+    Ok(data_dir.join("keeper.db"))
+}
+
+fn get_connection() -> Result<Connection> {
+    let db_path =
+        get_db_path().map_err(|e| rusqlite::Error::InvalidPath(PathBuf::from(e.to_string())))?;
+    Connection::open(db_path)
+}
+
 pub fn create_table() -> Result<()> {
-    let conn = Connection::open("keeper.db")?;
+    let conn = get_connection()?;
 
     conn.execute(
         "
-        Create table record (
+        Create table if not exists record (
             id integer primary key,
             check_in text,
             check_out text,
@@ -37,9 +65,8 @@ pub fn create_table() -> Result<()> {
     Ok(())
 }
 
-// Create (Save) a new entry
 pub fn save_entry(record: &Record) -> Result<()> {
-    let conn = Connection::open("keeper.db")?;
+    let conn = get_connection()?;
 
     conn.execute(
         "INSERT INTO record (check_in, check_out, date) VALUES (?1, ?2, ?3)",
@@ -53,9 +80,8 @@ pub fn save_entry(record: &Record) -> Result<()> {
     Ok(())
 }
 
-// Read all entries
 pub fn get_all_entries() -> Result<Vec<Record>> {
-    let conn = Connection::open("keeper.db")?;
+    let conn = get_connection()?;
     let mut stmt = conn.prepare("SELECT * FROM record")?;
 
     let records = stmt
@@ -65,9 +91,8 @@ pub fn get_all_entries() -> Result<Vec<Record>> {
     Ok(records)
 }
 
-// Read entries for a specific date
 pub fn get_entries_by_date(date: NaiveDate) -> Result<Vec<Record>> {
-    let conn = Connection::open("keeper.db")?;
+    let conn = get_connection()?;
     let mut stmt = conn.prepare("SELECT * FROM record WHERE date = ?")?;
 
     let date_str = date.format("%Y-%m-%d").to_string();
@@ -78,9 +103,8 @@ pub fn get_entries_by_date(date: NaiveDate) -> Result<Vec<Record>> {
     Ok(records)
 }
 
-// Update an existing entry
 pub fn update_entry(record: &Record) -> Result<()> {
-    let conn = Connection::open("keeper.db")?;
+    let conn = get_connection()?;
 
     conn.execute(
         "UPDATE record SET check_in = ?1, check_out = ?2, date = ?3 WHERE id = ?4",
@@ -95,9 +119,8 @@ pub fn update_entry(record: &Record) -> Result<()> {
     Ok(())
 }
 
-// Delete an entry
 pub fn delete_entry(id: i32) -> Result<()> {
-    let conn = Connection::open("keeper.db")?;
+    let conn = get_connection()?;
     conn.execute("DELETE FROM record WHERE id = ?1", params![id])?;
     Ok(())
 }
